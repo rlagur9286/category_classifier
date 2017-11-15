@@ -5,6 +5,8 @@ import re
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from itertools import count
+from utils.database import ProductManager
+
 
 GS_SHOP_PRODUCT_URL = 'http://www.gsshop.com/shop/sect/cateBestList.gs'
 GS_SHOP_URL = 'http://www.gsshop.com/index.gs'
@@ -13,44 +15,53 @@ hangul = re.compile('[^ ㄱ-ㅣ가-힣a-zA-Z]+')
 
 
 def do_crawl():
-    with open('cate_id_list.txt', 'r', encoding='utf8') as f:
-        lines = f.readlines()
-    for idx, cate in enumerate(lines):
-        sectid = cate.split('\t')[1].strip()
+    product_db = ProductManager()
+    cate_list = product_db.retrieve_cate_all()
+
+    for cate in cate_list:
+        sectid = cate.get('cate_id')
         print(sectid)
-        get_popular_data(sectid=sectid)
+        get_category_data(sectid=sectid)
 
 
 def get_cate_id():
+    product_db = ProductManager()
     html = requests.get(GS_SHOP_URL).text
     soup = BeautifulSoup(html, 'html.parser')
     cate_id_cnt = 0
 
+    # DB 카테고리 테이블 생성
+    res = product_db.create_cate_table()
+    if res != 0 and res != 1050:
+        raise Exception
+
+    res = product_db.create_product_table()
+    if res != 0 and res != 1050:
+        raise Exception
+
     cate_group = soup.select('.category-group li .items a')
-    with open('cate_id_list.txt', 'w', encoding='utf8') as f:
-        for cate in cate_group:
-            cate_href = cate.get('href')
-            cate_name = cate.text
-            matched = re.search(r"sectid=(\d+)&", cate_href)
-            try:
-                f.write(cate_name + '\t' + matched.group(1) + '\n')
+    for cate in cate_group:
+        cate_href = cate.get('href')
+        cate_name = cate.text
+        matched = re.search(r"sectid=(\d+)&", cate_href)
+        try:
+            # 카테고리 id, 카테고리 이름 db에 저장
+            res = product_db.insert_category(cate_id=matched.group(1), cate_name=cate_name)
+            if not res:
                 cate_id_cnt += 1
-            except AttributeError:
-                print(cate_href)
-    print(cate_id_cnt)
+        except AttributeError:
+            print(cate_href)
+    print(cate_id_cnt, "개의 카테고리가 추가되었습니다.")
     return cate_id_cnt
 
 
-def get_popular_data(sectid):
+def get_category_data(sectid):
+    product_db = ProductManager()
     ua = UserAgent()
     headers = {
         'User-Agent': ua.ie,
         'Referer': 'http://www.gsshop.com/shop/sect/sectL.gs?sectid=1378773'
     }
-    file_path = os.path.join(os.getcwd(), 'gs_data', str(sectid) + '.txt')
-    if os.path.exists(file_path):
-        return
-    file = open(file_path, 'w', encoding='utf8')
 
     prev = None
 
@@ -72,16 +83,16 @@ def get_popular_data(sectid):
         for idx, data in enumerate(data_list):
             prd_img = data.select('.prd-img img')[0]
             img_src = prd_img.get('src')
-
-            prd_info = data.select('.prd-info .prd-name')[0].text
-            prd_info = " ".join(prd_info.split())
-            file.write(img_src + '\t' + prd_info + '\n')
+            matched = re.search(r"/(\d+)_O1", img_src)
+            if matched:
+                prd_info = data.select('.prd-info .prd-name')[0].text
+                product_name = " ".join(prd_info.split())
+                product_db.insert_product(product_id=matched.group(1), product_name=product_name, product_cate=sectid, product_img=img_src)
         prev = data_list[0]
         if (page % 50) == 0:
             print(params)
-    file.close()
 
 if __name__ == '__main__':
-    get_cate_id()
-    # get_popular_data(1378773)
-    # do_crawl()
+    # get_cate_id()
+    # get_category_data(1378773)
+    do_crawl()
