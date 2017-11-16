@@ -125,15 +125,31 @@ class ProductManager(DBManager):
 
     def retrieve_inserted_cate_list(self):  # for retrieving Account
         assert self.connected  # Connection Check Flag
-        query_for_retrieve_url = "SELECT * FROM product_tb GROUP BY product_cate"
+        query_for_retrieve = "SELECT * FROM product_tb GROUP BY product_cate"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_for_retrieve_url)
+                cur.execute(query_for_retrieve)
                 return cur.fetchall()
 
         except Exception as exp:
             logger.error(">>>MYSQL ERROR<<<")
             logger.error("At retrieve_inserted_cate_list()")
+            num, error_msg = exp.args
+            logger.error("ERROR NO : %s", num)
+            logger.error("ERROR MSG : %s", error_msg)
+            return error_msg
+
+    def retrieve_products_by_cate(self, cate_id):  # for retrieving Account
+        assert self.connected  # Connection Check Flag
+        query_for_retrieve = "SELECT * FROM product_tb WHERE product_cate=(%s)"
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(query_for_retrieve, cate_id)
+                return cur.fetchall()
+
+        except Exception as exp:
+            logger.error(">>>MYSQL ERROR<<<")
+            logger.error("At retrieve_products_by_cate()")
             num, error_msg = exp.args
             logger.error("ERROR NO : %s", num)
             logger.error("ERROR MSG : %s", error_msg)

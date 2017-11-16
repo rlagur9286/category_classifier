@@ -2,12 +2,14 @@ import requests
 import os
 import re
 import time
+import shutil
+import tqdm
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
 from itertools import count
 from utils.database import ProductManager
-
+from urllib import request
 
 GS_SHOP_PRODUCT_URL = 'http://www.gsshop.com/shop/sect/cateBestList.gs'
 GS_SHOP_URL = 'http://www.gsshop.com/index.gs'
@@ -102,7 +104,31 @@ def get_category_data(sectid):
         if (page % 50) == 0:
             print(params)
 
+
+def maybe_download(download_path):
+    product_db = ProductManager()
+    cate_list = [cate.get('product_cate') for cate in product_db.retrieve_inserted_cate_list()]
+    total_size = len(cate_list)
+    total_cnt = 0
+    err_cnt = 0
+    for i, cate in enumerate(cate_list):
+        product_list = [(prod.get('product_id'), prod.get('product_img')) for prod in product_db.retrieve_products_by_cate(cate)]
+
+        for prod in product_list:
+            try:
+                file_name = str(prod[0]) + '.jpg'
+                url = 'http:' + str(prod[1])
+                request.urlretrieve(url, file_name)
+                if not os.path.exists(download_path + str(cate)):
+                    os.mkdir(download_path + str(cate))
+                shutil.move(os.getcwd() + '/' + file_name, download_path + str(cate) + '/' + file_name)
+                total_cnt += 1
+            except Exception as exp:
+                print(exp)
+                err_cnt += 1
+        print('{}% 완료'.format((i/total_size) * 100))
 if __name__ == '__main__':
     # get_cate_id()
     # get_category_data(1378773)
-    do_crawl()
+    # do_crawl()
+    maybe_download(download_path='../data/')
