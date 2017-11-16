@@ -1,6 +1,7 @@
 import requests
 import os
 import re
+import time
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -17,11 +18,12 @@ hangul = re.compile('[^ ㄱ-ㅣ가-힣a-zA-Z]+')
 def do_crawl():
     product_db = ProductManager()
     cate_list = product_db.retrieve_cate_all()
+    inserted_cate_list = [cate.get('product_cate') for cate in product_db.retrieve_inserted_cate_list()]
 
     for cate in cate_list:
         sectid = cate.get('cate_id')
-        print(sectid)
-        get_category_data(sectid=sectid)
+        if str(sectid) not in inserted_cate_list:
+            get_category_data(sectid=sectid)
 
 
 def get_cate_id():
@@ -64,8 +66,10 @@ def get_category_data(sectid):
     }
 
     prev = None
-
+    prd_cnt = 0
     for page in count(1):
+        if prd_cnt > 10000:
+            break
         params = {
             'sectid': sectid,
             'msectid': '',
@@ -73,7 +77,12 @@ def get_category_data(sectid):
             'pageIndex': page,
             'lseq': 403227,
         }
-        html = requests.post(GS_SHOP_PRODUCT_URL, headers=headers, params=params).text
+        try:
+            html = requests.post(GS_SHOP_PRODUCT_URL, headers=headers, params=params).text
+        except Exception as e:
+            print(e)
+            time.sleep(10)
+            html = requests.post(GS_SHOP_PRODUCT_URL, headers=headers, params=params).text
         soup = BeautifulSoup(html, 'html.parser')
         data_list = soup.select('ul li')
         if len(data_list) == 0:
@@ -88,6 +97,7 @@ def get_category_data(sectid):
                 prd_info = data.select('.prd-info .prd-name')[0].text
                 product_name = " ".join(prd_info.split())
                 product_db.insert_product(product_id=matched.group(1), product_name=product_name, product_cate=sectid, product_img=img_src)
+                prd_cnt += 1
         prev = data_list[0]
         if (page % 50) == 0:
             print(params)
