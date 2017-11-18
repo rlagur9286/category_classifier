@@ -3,7 +3,6 @@ import os
 import re
 import time
 import shutil
-import tqdm
 
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
@@ -127,6 +126,7 @@ def maybe_download(download_path):
                 print(exp)
                 err_cnt += 1
         print('{}% 완료'.format((i/total_size) * 100))
+
 if __name__ == '__main__':
     # get_cate_id()
     # get_category_data(1378773)

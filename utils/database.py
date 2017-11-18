@@ -139,9 +139,12 @@ class ProductManager(DBManager):
             logger.error("ERROR MSG : %s", error_msg)
             return error_msg
 
-    def retrieve_products_by_cate(self, cate_id):  # for retrieving Account
+    def retrieve_products_by_cate(self, cate_id=None):  # for retrieving Account
         assert self.connected  # Connection Check Flag
-        query_for_retrieve = "SELECT * FROM product_tb WHERE product_cate=(%s)"
+        if not cate_id:
+            query_for_retrieve = "SELECT * FROM product_tb ORDER BY rand()"
+        else:
+            query_for_retrieve = "SELECT * FROM product_tb WHERE product_cate=(%s)"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
                 cur.execute(query_for_retrieve, cate_id)
