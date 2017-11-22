@@ -157,3 +157,19 @@ class ProductManager(DBManager):
             logger.error("ERROR NO : %s", num)
             logger.error("ERROR MSG : %s", error_msg)
             return error_msg
+
+    def retrieve_cate_name_by_cate_id(self, cate_id):  # for retrieving Account
+        assert self.connected  # Connection Check Flag
+        query_for_retrieve = "SELECT * FROM cate_tb where cate_id=%s"
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(query_for_retrieve, cate_id)
+                return cur.fetchone()
+
+        except Exception as exp:
+            logger.error(">>>MYSQL ERROR<<<")
+            logger.error("At retrieve_cate_name_by_cate_id()")
+            num, error_msg = exp.args
+            logger.error("ERROR NO : %s", num)
+            logger.error("ERROR MSG : %s", error_msg)
+            return error_msg

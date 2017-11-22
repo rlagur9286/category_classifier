@@ -42,9 +42,9 @@ tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularizaion lambda (default: 0
 
 # Training parameters
 tf.flags.DEFINE_integer("batch_size", 128, "Batch Size (default: 64)")
-tf.flags.DEFINE_integer("num_epochs", 1000, "Number of training epochs (default: 200)")
-tf.flags.DEFINE_integer("evaluate_every", 100, "Evaluate model on dev set after this many steps (default: 100)")
-tf.flags.DEFINE_integer("checkpoint_every", 100, "Save model after this many steps (default: 100)")
+tf.flags.DEFINE_integer("num_epochs", 200, "Number of training epochs (default: 200)")
+tf.flags.DEFINE_integer("evaluate_every", 1000, "Evaluate model on dev set after this many steps (default: 100)")
+tf.flags.DEFINE_integer("checkpoint_every", 1000, "Save model after this many steps (default: 100)")
 
 # Eval Parameters
 tf.flags.DEFINE_string("checkpoint_dir", "", "Checkpoint directory from training run")
@@ -251,7 +251,7 @@ def train():
         with sess.as_default():
             # Define Training procedure
             global_step = tf.Variable(0, name="global_step", trainable=False)
-            optimizer = tf.train.AdamOptimizer(0.001)
+            optimizer = tf.train.AdamOptimizer(0.005)
             grads_and_vars = optimizer.compute_gradients(cnn.loss)
             train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
@@ -310,10 +310,10 @@ def train():
                     current_step = tf.train.global_step(sess, global_step)
                     if current_step % FLAGS.evaluate_every == 0:
                         print("\nEvaluation:")
-                        acc = dev_step(x_dev[:1000], y_dev[:1000])
+                        acc = dev_step(x_dev[:10000], y_dev[:10000])
                         print("")
                     if current_step % FLAGS.checkpoint_every == 0:
-                        acc = dev_step(x_dev[:1000], y_dev[:1000])
+                        acc = dev_step(x_dev[:10000], y_dev[:10000])
                         path = saver.save(sess, checkpoint_prefix, global_step=current_step)
                         print("Saved model checkpoint to {}\n".format(path))
 
@@ -377,8 +377,42 @@ def eval():
         correct_predictions = float(sum(all_predictions == y_test))
         print("checkpoint - Accuracy: {:g}".format(correct_predictions / float(len(y_test))))
 
+
+def predict(product_name):
+    product_db = ProductManager()
+    raw = tokenize(product_name)
+    if FLAGS.checkpoint_dir == "":
+        all_subdirs = ["./runs/" + d for d in os.listdir('./runs/.') if os.path.isdir("./runs/" + d)]
+        latest_subdir = max(all_subdirs, key=os.path.getmtime)
+        FLAGS.checkpoint_dir = latest_subdir + "/checkpoint"
+
+    # Map data into vocabulary
+    vocab_path = os.path.join(FLAGS.checkpoint_dir, "..", "vocab")
+    vocab_processor = data_loader.restore_vocab_processor(vocab_path)
+    graph = tf.Graph()
+    with graph.as_default():
+        session_conf = tf.ConfigProto(
+            allow_soft_placement=FLAGS.allow_soft_placement,
+            log_device_placement=FLAGS.log_device_placement)
+        sess = tf.Session(config=session_conf)
+        sess.run(tf.global_variables_initializer())
+
+        checkpoint_file = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
+        # Load the saved meta graph and restore variables
+        saver = tf.train.import_meta_graph("{}.meta".format(checkpoint_file))
+        saver.restore(sess, checkpoint_file)
+    input_x = graph.get_operation_by_name("input_x").outputs[0]
+    dropout_keep_prob = graph.get_operation_by_name("dropout_keep_prob").outputs[0]
+    predictions = graph.get_operation_by_name("output/predictions").outputs[0]
+    x_test = np.array(list(vocab_processor.transform([raw])))
+    prediction = sess.run(predictions, {input_x: x_test, dropout_keep_prob: 1.0})
+    cate_id = data_loader.class_labels(prediction)
+    res = product_db.retrieve_cate_name_by_cate_id(int(cate_id[0]))
+    print('CATEGORY : {}'.format(res.get('cate_name')))
+
 if __name__ == '__main__':
     # DB로부터 읽어와서
     # read_data()
     # train()
-    eval()
+    # eval()
+    predict(product_name='[DRETEC] 일본 드레텍 디지털 다용도 저울(2kg) KS-502')
