@@ -23,15 +23,15 @@ class DBManager(object):
             self.connected = False
 
 
-class ProductManager(DBManager):
+class CategoryManager(DBManager):
     def __init__(self):
         DBManager.__init__(self)
 
     def create_cate_table(self):
         assert self.connected  # Connection Check Flag
-        query_for_create = "CREATE TABLE cate_tb (" \
-                                 "cate_id INTEGER(11) PRIMARY KEY, " \
-                                 "cate_name VARCHAR (255) NOT NULL" \
+        query_for_create = "CREATE TABLE data_category (" \
+                                 "category_seq INTEGER(11) PRIMARY KEY, " \
+                                 "category_name VARCHAR (255) NOT NULL" \
                                  ")"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
@@ -42,43 +42,20 @@ class ProductManager(DBManager):
             num, error_msg = exp.args
             if num != 1050:
                 logger.error(">>>MYSQL WARNING<<<")
-                logger.error("At create_cate_table()")
+                logger.error("At create_data_category_table()")
 
                 logger.error("ERROR NO : %s", num)
                 logger.error("ERROR MSG : %s", error_msg)
             return num
 
-    def create_product_table(self):
+    def insert_category(self, category_seq, category_name):  # for retrieving Account
         assert self.connected  # Connection Check Flag
-        query_for_create = "CREATE TABLE product_tb (" \
-                                 "product_id INTEGER(11) PRIMARY KEY, " \
-                                 "product_name VARCHAR (255) NOT NULL," \
-                                 "product_cate VARCHAR (255) NOT NULL," \
-                                 "product_img VARCHAR (255) NOT NULL" \
-                                 ")"
-        try:
-            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                res = cur.execute(query_for_create)
-                return res
-
-        except Exception as exp:
-            num, error_msg = exp.args
-            if num != 1050:
-                logger.error(">>>MYSQL WARNING<<<")
-                logger.error("At create_product_table()")
-
-                logger.error("ERROR NO : %s", num)
-                logger.error("ERROR MSG : %s", error_msg)
-            return num
-
-    def insert_category(self, cate_id, cate_name):  # for retrieving Account
-        assert self.connected  # Connection Check Flag
-        query_insert_category = "INSERT INTO cate_tb " \
-                                "(cate_id, cate_name) " \
+        query_insert_category = "INSERT INTO data_category " \
+                                "(category_seq, category_name) " \
                                 "VALUES (%s, %s)"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_insert_category, (cate_id, cate_name))
+                cur.execute(query_insert_category, (category_seq, category_name))
                 return self.conn.commit()
 
         except Exception as exp:
@@ -89,14 +66,80 @@ class ProductManager(DBManager):
             logger.error("ERROR MSG : %s", error_msg)
             return error_msg
 
-    def insert_product(self, product_id, product_name, product_cate, product_img):  # for retrieving Account
+    def retrieve_cate_list(self):  # for retrieving Product
         assert self.connected  # Connection Check Flag
-        query_insert_category = "INSERT INTO product_tb " \
-                                "(product_id, product_name,product_cate, product_img) " \
-                                "VALUES (%s, %s, %s, %s)"
+        query_for_retrieve = "SELECT category_seq FROM data_category"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_insert_category, (product_id, product_name,product_cate, product_img))
+                cur.execute(query_for_retrieve)
+                return cur.fetchall()
+
+        except Exception as exp:
+            logger.error(">>>MYSQL ERROR<<<")
+            logger.error("At retrieve_cate_list()")
+            num, error_msg = exp.args
+            logger.error("ERROR NO : %s", num)
+            logger.error("ERROR MSG : %s", error_msg)
+            return error_msg
+
+    def retrieve_cate_name_by_cate_id(self, category_seq=None):  # for retrieving Product
+        assert self.connected  # Connection Check Flag
+        query_for_retrieve = "SELECT category_name FROM data_category WHERE category_seq=%s"
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(query_for_retrieve, category_seq)
+                return cur.fetchall()
+
+        except Exception as exp:
+            logger.error(">>>MYSQL ERROR<<<")
+            logger.error("At retrieve_cate_name_by_cate_id()")
+            num, error_msg = exp.args
+            logger.error("ERROR NO : %s", num)
+            logger.error("ERROR MSG : %s", error_msg)
+            return error_msg
+
+
+class ProductManager(DBManager):
+    def __init__(self):
+        DBManager.__init__(self)
+
+    def create_product_table(self):
+        assert self.connected  # Connection Check Flag
+        query_for_create = "CREATE TABLE data_product (" \
+                                 "product_seq INTEGER(11) PRIMARY KEY, " \
+                                 "category_seq INTEGER (11) NOT NULL," \
+                                 "mall_seq INTEGER (11) NOT NULL," \
+                                 "product_name VARCHAR (255) NOT NULL," \
+                                 "price INTEGER (11) NOT NULL," \
+                                 "brand_name VARCHAR (255)," \
+                                 "maker_name VARCHAR (255)," \
+                                 "mall_category_name VARCHAR (255)," \
+                                 "img VARCHAR (255)" \
+                                 ")"
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                res = cur.execute(query_for_create)
+                return res
+
+        except Exception as exp:
+            num, error_msg = exp.args
+            if num != 1050:
+                logger.error(">>>MYSQL WARNING<<<")
+                logger.error("At create_data_product_table()")
+
+                logger.error("ERROR NO : %s", num)
+                logger.error("ERROR MSG : %s", error_msg)
+            return num
+
+    def insert_product(self, product_seq, category_seq, mall_seq, product_name, price, brand_name, maker_name,
+                       mall_category_name, img):  # for retrieving Account
+        assert self.connected  # Connection Check Flag
+        query_insert_product = "INSERT INTO data_product " \
+                                "(product_seq, category_seq, mall_seq, product_name, price, brand_name, maker_name, mall_category_name, img) " \
+                                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        try:
+            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
+                cur.execute(query_insert_product, (product_seq, category_seq, mall_seq, product_name, price, brand_name, maker_name, mall_category_name, img))
                 return self.conn.commit()
 
         except Exception as exp:
@@ -107,44 +150,12 @@ class ProductManager(DBManager):
             logger.error("ERROR MSG : %s", error_msg)
             return error_msg
 
-    def retrieve_cate_all(self):  # for retrieving Account
-        assert self.connected  # Connection Check Flag
-        query_for_retrieve_url = "SELECT * FROM cate_tb"
-        try:
-            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_for_retrieve_url)
-                return cur.fetchall()
-
-        except Exception as exp:
-            logger.error(">>>MYSQL ERROR<<<")
-            logger.error("At retrieve_cate_all()")
-            num, error_msg = exp.args
-            logger.error("ERROR NO : %s", num)
-            logger.error("ERROR MSG : %s", error_msg)
-            return error_msg
-
-    def retrieve_inserted_cate_list(self):  # for retrieving Account
-        assert self.connected  # Connection Check Flag
-        query_for_retrieve = "SELECT * FROM product_tb GROUP BY product_cate"
-        try:
-            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_for_retrieve)
-                return cur.fetchall()
-
-        except Exception as exp:
-            logger.error(">>>MYSQL ERROR<<<")
-            logger.error("At retrieve_inserted_cate_list()")
-            num, error_msg = exp.args
-            logger.error("ERROR NO : %s", num)
-            logger.error("ERROR MSG : %s", error_msg)
-            return error_msg
-
-    def retrieve_products_by_cate(self, cate_id=None):  # for retrieving Account
+    def retrieve_products_by_cate(self, cate_id=None, limit=None):  # for retrieving Product
         assert self.connected  # Connection Check Flag
         if not cate_id:
-            query_for_retrieve = "SELECT * FROM product_tb ORDER BY rand()"
+            query_for_retrieve = "SELECT product_seq, product_name, category_seq FROM data_product ORDER BY rand() LIMIT 100000"
         else:
-            query_for_retrieve = "SELECT * FROM product_tb WHERE product_cate=(%s)"
+            query_for_retrieve = "SELECT product_seq, product_name, category_seq FROM data_product WHERE category_seq=(%s)"
         try:
             with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
                 cur.execute(query_for_retrieve, cate_id)
@@ -158,18 +169,3 @@ class ProductManager(DBManager):
             logger.error("ERROR MSG : %s", error_msg)
             return error_msg
 
-    def retrieve_cate_name_by_cate_id(self, cate_id):  # for retrieving Account
-        assert self.connected  # Connection Check Flag
-        query_for_retrieve = "SELECT * FROM cate_tb where cate_id=%s"
-        try:
-            with self.conn.cursor(pymysql.cursors.DictCursor) as cur:
-                cur.execute(query_for_retrieve, cate_id)
-                return cur.fetchone()
-
-        except Exception as exp:
-            logger.error(">>>MYSQL ERROR<<<")
-            logger.error("At retrieve_cate_name_by_cate_id()")
-            num, error_msg = exp.args
-            logger.error("ERROR NO : %s", num)
-            logger.error("ERROR MSG : %s", error_msg)
-            return error_msg

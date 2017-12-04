@@ -31,6 +31,7 @@ class MultiClassDataLoader(object):
         x_dev, y_dev = self.__load_data_and_labels(self.__dev_data_file)
 
         max_doc_len = max([len(doc) for doc in x_train])
+
         max_doc_len_dev = max([len(doc) for doc in x_dev])
         if max_doc_len_dev > max_doc_len:
             max_doc_len = max_doc_len_dev

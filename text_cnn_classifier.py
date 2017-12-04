@@ -8,6 +8,7 @@ from konlpy.tag import Twitter
 from tensorflow.contrib import learn
 from multi_class_data_loader import MultiClassDataLoader
 from utils.database import ProductManager
+from utils.database import CategoryManager
 
 
 class WordDataProcessor(object):
@@ -41,8 +42,8 @@ tf.flags.DEFINE_float("dropout_keep_prob", 0.5, "Dropout keep probability (defau
 tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularizaion lambda (default: 0.0)")
 
 # Training parameters
-tf.flags.DEFINE_integer("batch_size", 128, "Batch Size (default: 64)")
-tf.flags.DEFINE_integer("num_epochs", 200, "Number of training epochs (default: 200)")
+tf.flags.DEFINE_integer("batch_size", 256, "Batch Size (default: 64)")
+tf.flags.DEFINE_integer("num_epochs", 100, "Number of training epochs (default: 200)")
 tf.flags.DEFINE_integer("evaluate_every", 1000, "Evaluate model on dev set after this many steps (default: 100)")
 tf.flags.DEFINE_integer("checkpoint_every", 1000, "Save model after this many steps (default: 100)")
 
@@ -145,8 +146,14 @@ class TextCNN(object):
 
 def batch_iter(data, batch_size, num_epochs, shuffle=True):
     """
-    Generates a batch iterator for a dataset.
+    주어진 batch size 만큼씩 데이터 yield
+    :param data: 전체 데이터
+    :param batch_size: batch size
+    :param num_epochs: 전체 epoch
+    :param shuffle: 섞을지 말지
+    :return: batch size 만큼의 dataset
     """
+
     data = np.array(data)
     data_size = len(data)
     num_batches_per_epoch = int(len(data)/batch_size) + 1
@@ -167,34 +174,10 @@ def chunks(x, n):
     return [x[i:i + n] for i in range(0, len(x), n)]
 
 
-def read_data():
-    product_db = ProductManager()
-    products = product_db.retrieve_products_by_cate()
-
-    train_data = products[len(products)//10:]
-    train_data = [(data.get('product_name'), data.get('product_cate')) for data in train_data]
-    train_data = [(tokenize(splits(row[0])), row[1]) for row in train_data]
-
-    test_data = products[:len(products)//10]
-    test_data = [(data.get('product_name'), data.get('product_cate')) for data in test_data]
-    test_data = [(tokenize(splits(row[0])), row[1]) for row in test_data]
-
-    with open('data_/train.txt', 'w', encoding='utf-8') as f:
-        for data in train_data:
-            f.write(''.join(data[0]) + ',' + str(data[1]) + '\n')
-
-    with open('data_/test.txt', 'w', encoding='utf-8') as f:
-        for data in test_data:
-            f.write(''.join(data[0]) + ',' + str(data[1]) + '\n')
-
-    with open('data_/cls.txt', 'w', encoding='utf-8') as f:
-        for cls in product_db.retrieve_inserted_cate_list():
-            f.write(str(cls.get('product_cate')) + '\n')
-
-
 def splits(doc):
-    doc = doc.replace('[', '').replace(']', ' ').replace('(', '').replace(')', ' ').replace('\'', ' ').replace('\"', ' ')
-    doc = doc.replace('.', ' ').replace(',', ' ').replace('!', ' ').replace('?', ' ').replace('/', ' ')\
+    doc = doc.replace('[', '').replace(']', ' ').replace('(', '').replace(')', ' ').replace('\'', ' ').replace('\"',
+                                                                                                               ' ')
+    doc = doc.replace('.', ' ').replace(',', ' ').replace('!', ' ').replace('?', ' ').replace('/', ' ') \
         .replace('-', ' ').replace('_', ' ').replace('+', ' ').replace('~', ' ')
     return doc
 
@@ -207,212 +190,285 @@ def tokenize(doc):
     return ' '.join(result)
 
 
-def get_checkpoint(out_dir):
-    checkpoint_dir = os.path.abspath(os.path.join(out_dir, 'checkpoint'))
-    if not os.path.exists(checkpoint_dir):
-        os.makedirs(checkpoint_dir)
-    return checkpoint_dir
+class TextCNNClassifier:
+    def __init__(self):
+        self.accuracy = 0
+        # 특별하게 checkpoint dir이 주어지지 않았다면 가장 최근 checkpoint Load
+        if FLAGS.checkpoint_dir == "":
+            all_subdirs = ["./runs/" + d for d in os.listdir('./runs/.') if os.path.isdir("./runs/" + d)]
+            latest_subdir = max(all_subdirs, key=os.path.getmtime)
+            FLAGS.checkpoint_dir = latest_subdir + "/checkpoint"
 
+        # 단어 사전 불러오기
+        vocab_path = os.path.join(FLAGS.checkpoint_dir, "..", "vocab")
+        self.vocab_processor = data_loader.restore_vocab_processor(vocab_path)
 
-def train():
-    print("\nParameters:")
-    for attr, value in sorted(FLAGS.__flags.items()):
-        print("{}={}".format(attr.upper(), value))
-    print("")
+        # 그래프 그리고 checkpoint 데이터 불러오기
+        self.graph = tf.Graph()
+        with self.graph.as_default():
+            session_conf = tf.ConfigProto(
+                allow_soft_placement=FLAGS.allow_soft_placement,
+                log_device_placement=FLAGS.log_device_placement)
+            self.sess = tf.Session(config=session_conf)
+            self.sess.run(tf.global_variables_initializer())
 
-    # Load data
-    print("Loading data...")
-    x_train, y_train, x_dev, y_dev = data_loader.prepare_data()
-    vocab_processor = data_loader.vocab_processor
+            checkpoint_file = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
+            # Load the saved meta graph and restore variables
+            saver = tf.train.import_meta_graph("{}.meta".format(checkpoint_file))
+            saver.restore(self.sess, checkpoint_file)
 
-    print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
-    print("Train/Dev split: {:d}/{:d}".format(len(y_train), len(y_dev)))
+    def read_data(self):
+        """
+        DB로부터 데이터를 읽어 온 후 앞 10%는 Test set으로 enl 90%는 Train set으로 나누어서 저장
+        :return: 
+        """
 
-    with tf.Graph().as_default():
-        session_conf = tf.ConfigProto(
-            allow_soft_placement=FLAGS.allow_soft_placement,
-            log_device_placement=FLAGS.log_device_placement)
+        product_db = ProductManager()
+        category_db = CategoryManager()
+        # DB로부터 모든 데이터 불러오기
+        products = product_db.retrieve_products_by_cate()
 
-        sess = tf.Session(config=session_conf)
-        cnn = TextCNN(
-            sequence_length=x_train.shape[1],
-            num_classes=y_train.shape[1],
-            vocab_size=len(vocab_processor.vocabulary_),
-            embedding_size=FLAGS.embedding_dim,
-            filter_sizes=list(map(int, FLAGS.filter_sizes.split(","))),
-            num_filters=FLAGS.num_filters,
-            l2_reg_lambda=FLAGS.l2_reg_lambda)
+        # 데이터 중 뒤 90% 학습 데이터 셋으로 따로 저장
+        train_data = products[len(products)//10:]
+        train_data = [(data.get('product_name'), data.get('category_seq'), data.get('product_seq')) for data in train_data]
+        train_data = [(tokenize(splits(row[0])), row[1], row[2]) for row in train_data]
 
-        # Output directory for models and summaries
-        timestamp = str(int(time.time()))
-        out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
-        print("Writing to {}\n".format(out_dir))
+        # 데이터 중 앞 10% 테스트 셋으로 따로 저장
+        test_data = products[:len(products)//10]
+        test_data = [(data.get('product_name'), data.get('category_seq'), data.get('product_seq')) for data in test_data]
+        test_data = [(tokenize(splits(row[0])), row[1], row[2]) for row in test_data]
 
-        with sess.as_default():
-            # Define Training procedure
-            global_step = tf.Variable(0, name="global_step", trainable=False)
-            optimizer = tf.train.AdamOptimizer(0.005)
-            grads_and_vars = optimizer.compute_gradients(cnn.loss)
-            train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+        # 나중에 쓰기 쉽게 .txt 형식으로 저장
+        with open('data_/train.txt', 'w', encoding='utf-8') as f:
+            for data in train_data:
+                f.write(''.join(data[0]) + ',' + str(data[1]) + ',' + str(data[2]) + '\n')
 
-            # Initialize all variables
-            sess.run(tf.global_variables_initializer())
+        with open('data_/test.txt', 'w', encoding='utf-8') as f:
+            for data in test_data:
+                f.write(''.join(data[0]) + ',' + str(data[1]) + ',' + str(data[2]) + '\n')
 
-            # Checkpoint directory. Tensorflow assumes this directory already exists so we need to create it
-            checkpoint_dir = get_checkpoint(out_dir)
-            checkpoint_prefix = os.path.join(checkpoint_dir, "model")
-            if not os.path.exists(checkpoint_dir):
-                os.makedirs(checkpoint_dir)
-            saver = tf.train.Saver(tf.global_variables())
+        with open('data_/cls.txt', 'w', encoding='utf-8') as f:
+            for cls in category_db.retrieve_cate_list():
+                f.write(str(cls.get('category_seq')) + '\n')
 
-            # Write vocabulary
-            vocab_processor.save(os.path.join(out_dir, "vocab"))
+    def get_checkpoint(self, out_dir):
+        """
+        checkpoint 디렉토리 없다면 생성
+        :param out_dir: 
+        :return: 
+        """
+        checkpoint_dir = os.path.abspath(os.path.join(out_dir, 'checkpoint'))
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
+        return checkpoint_dir
 
-            def train_step(x_batch, y_batch):
-                """
-                A single training step
-                """
-                feed_dict = {
-                    cnn.input_x: x_batch,
-                    cnn.input_y: y_batch,
-                    cnn.dropout_keep_prob: FLAGS.dropout_keep_prob
-                }
-                _, step, loss, accuracy = sess.run(
-                    [train_op, global_step, cnn.loss, cnn.accuracy],
-                    feed_dict)
-                time_str = datetime.datetime.now().isoformat()
-                print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
+    def train(self):
+        print("\nParameters:")
+        for attr, value in sorted(FLAGS.__flags.items()):
+            print("{}={}".format(attr.upper(), value))
+        print("")
 
-            def dev_step(x_batch, y_batch, writer=None):
-                """
-                Evaluates model on a dev set
-                """
-                feed_dict = {
-                    cnn.input_x: x_batch,
-                    cnn.input_y: y_batch,
-                    cnn.dropout_keep_prob: 1.0
-                }
-                step, loss, accuracy = sess.run(
-                    [global_step, cnn.loss, cnn.accuracy],
-                    feed_dict)
-                time_str = datetime.datetime.now().isoformat()
-                print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
-                return accuracy
+        # Load data
+        print("Loading data...")
+        x_train, y_train, x_dev, y_dev = data_loader.prepare_data()
+        vocab_processor = data_loader.vocab_processor
 
-            # Generate batches
-            batches = batch_iter(
-                list(zip(x_train, y_train)), FLAGS.batch_size, FLAGS.num_epochs)
-            # Training loop. For each batch...
-            with tf.device('/gpu:0'):
-                for batch in batches:
-                    x_batch, y_batch = zip(*batch)
-                    train_step(x_batch, y_batch)
-                    current_step = tf.train.global_step(sess, global_step)
-                    if current_step % FLAGS.evaluate_every == 0:
-                        print("\nEvaluation:")
-                        acc = dev_step(x_dev[:10000], y_dev[:10000])
-                        print("")
-                    if current_step % FLAGS.checkpoint_every == 0:
-                        acc = dev_step(x_dev[:10000], y_dev[:10000])
-                        path = saver.save(sess, checkpoint_prefix, global_step=current_step)
-                        print("Saved model checkpoint to {}\n".format(path))
+        print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
+        print("Train/Dev split: {:d}/{:d}".format(len(y_train), len(y_dev)))
 
+        with tf.Graph().as_default():
+            session_conf = tf.ConfigProto(
+                allow_soft_placement=FLAGS.allow_soft_placement,
+                log_device_placement=FLAGS.log_device_placement)
 
-def eval():
-    print("\nParameters:")
-    for attr, value in sorted(FLAGS.__flags.items()):
-        print("{}={}".format(attr.upper(), value))
-    print("")
-    if FLAGS.eval_train:
-        x_raw, y_test = data_loader.load_data_and_labels()
-        y_test = np.argmax(y_test, axis=1)
-    else:
-        x_raw, y_test = data_loader.load_dev_data_and_labels()
-        y_test = np.argmax(y_test, axis=1)
+            sess = tf.Session(config=session_conf)
+            cnn = TextCNN(
+                sequence_length=x_train.shape[1],
+                num_classes=y_train.shape[1],
+                vocab_size=len(vocab_processor.vocabulary_),
+                embedding_size=FLAGS.embedding_dim,
+                filter_sizes=list(map(int, FLAGS.filter_sizes.split(","))),
+                num_filters=FLAGS.num_filters,
+                l2_reg_lambda=FLAGS.l2_reg_lambda)
 
-    # checkpoint_dir이 없다면 가장 최근 dir 추출하여 셋팅
-    if FLAGS.checkpoint_dir == "":
-        all_subdirs = ["./runs/" + d for d in os.listdir('./runs/.') if os.path.isdir("./runs/" + d)]
-        latest_subdir = max(all_subdirs, key=os.path.getmtime)
-        FLAGS.checkpoint_dir = latest_subdir + "/checkpoint"
+            # Output directory for models and summaries
+            timestamp = str(int(time.time()))
+            out_dir = os.path.abspath(os.path.join(os.path.curdir, "runs", timestamp))
+            print("Writing to {}\n".format(out_dir))
 
-    # Map data into vocabulary
-    vocab_path = os.path.join(FLAGS.checkpoint_dir, "..", "vocab")
-    vocab_processor = data_loader.restore_vocab_processor(vocab_path)
-    x_test = np.array(list(vocab_processor.transform(x_raw)))
+            with sess.as_default():
+                # Define Training procedure
+                global_step = tf.Variable(0, name="global_step", trainable=False)
+                optimizer = tf.train.AdamOptimizer(0.005)
+                grads_and_vars = optimizer.compute_gradients(cnn.loss)
+                train_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
-    print("\nEvaluating...\n")
+                # Initialize all variables
+                sess.run(tf.global_variables_initializer())
 
-    graph = tf.Graph()
-    with graph.as_default():
-        session_conf = tf.ConfigProto(
-            allow_soft_placement=FLAGS.allow_soft_placement,
-            log_device_placement=FLAGS.log_device_placement)
-        sess = tf.Session(config=session_conf)
-        sess.run(tf.global_variables_initializer())
+                # Checkpoint directory. Tensorflow assumes this directory already exists so we need to create it
+                checkpoint_dir = self.get_checkpoint(out_dir)
+                checkpoint_prefix = os.path.join(checkpoint_dir, "model")
+                if not os.path.exists(checkpoint_dir):
+                    os.makedirs(checkpoint_dir)
+                saver = tf.train.Saver(tf.global_variables())
 
-        checkpoint_file = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
-        # Load the saved meta graph and restore variables
-        saver = tf.train.import_meta_graph("{}.meta".format(checkpoint_file))
-        saver.restore(sess, checkpoint_file)
+                # Write vocabulary
+                vocab_processor.save(os.path.join(out_dir, "vocab"))
 
-        # Get the placeholders from the graph by name
-        input_x = graph.get_operation_by_name("input_x").outputs[0]
-        # input_y = graph.get_operation_by_name("input_y").outputs[0]
-        dropout_keep_prob = graph.get_operation_by_name("dropout_keep_prob").outputs[0]
+                def train_step(x_batch, y_batch):
+                    """
+                    A single training step
+                    """
+                    feed_dict = {
+                        cnn.input_x: x_batch,
+                        cnn.input_y: y_batch,
+                        cnn.dropout_keep_prob: FLAGS.dropout_keep_prob
+                    }
+                    _, step, loss, accuracy = sess.run(
+                        [train_op, global_step, cnn.loss, cnn.accuracy],
+                        feed_dict)
+                    time_str = datetime.datetime.now().isoformat()
+                    print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
 
-        # Tensors we want to evaluate
-        predictions = graph.get_operation_by_name("output/predictions").outputs[0]
+                def dev_step(x_batch, y_batch, writer=None):
+                    """
+                    Evaluates model on a dev set
+                    """
+                    feed_dict = {
+                        cnn.input_x: x_batch,
+                        cnn.input_y: y_batch,
+                        cnn.dropout_keep_prob: 1.0
+                    }
+                    step, loss, accuracy = sess.run(
+                        [global_step, cnn.loss, cnn.accuracy],
+                        feed_dict)
+                    time_str = datetime.datetime.now().isoformat()
+                    print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
+                    return accuracy
 
-        # Generate batches for one epoch
+                # Generate batches
+                batches = batch_iter(
+                    list(zip(x_train, y_train)), FLAGS.batch_size, FLAGS.num_epochs)
+                # Training loop. For each batch...
+                with tf.device('/gpu:0'):
+                    for batch in batches:
+                        x_batch, y_batch = zip(*batch)
+                        train_step(x_batch, y_batch)
+                        current_step = tf.train.global_step(sess, global_step)
+                        if current_step % FLAGS.evaluate_every == 0:
+                            print("\nEvaluation:")
+                            acc = dev_step(x_dev[:10000], y_dev[:10000])
+                            print("")
+                        if current_step % FLAGS.checkpoint_every == 0:
+                            acc = dev_step(x_dev[:10000], y_dev[:10000])
+                            path = saver.save(sess, checkpoint_prefix, global_step=current_step)
+                            print("Saved model checkpoint to {}\n".format(path))
+
+    def eval(self, show_params=False):
+        """
+        Test datset을 가지고 학습된 모델 성능 평가
+        :param show_params: True라면 파라미터 출력
+        :return: Test dataset의 모든 softmax 값 리턴
+        """
+
+        # show_params가 True라면 하이퍼파라미터 출력
+        if show_params:
+            print("\nParameters:")
+            for attr, value in sorted(FLAGS.__flags.items()):
+                print("{}={}".format(attr.upper(), value))
+            print("")
+
+        # eval_train이 True라면 학습 데이터와 테스트 데이터 모두 불러오기
+        if FLAGS.eval_train:
+            x_raw, y_test = data_loader.load_data_and_labels()
+            y_test = np.argmax(y_test, axis=1)
+        else:
+            x_raw, y_test = data_loader.load_dev_data_and_labels()
+            y_test = np.argmax(y_test, axis=1)
+
+        x_test = np.array(list(self.vocab_processor.transform(x_raw)))
+
+        print("\nEvaluating...\n")
+
+        # input과 dropout layer tensor 가져오기
+        input_x = self.graph.get_operation_by_name("input_x").outputs[0]
+        dropout_keep_prob = self.graph.get_operation_by_name("dropout_keep_prob").outputs[0]
+
+        # 우리가 알고 싶은 예측 layer tensor
+        predictions = self.graph.get_operation_by_name("output/predictions").outputs[0]
+        score_layer = self.graph.get_operation_by_name("output/scores").outputs[0]
+
+        # batch size 만큼씩 데이터 서빙
         batches = batch_iter(list(x_test), FLAGS.batch_size, 1, shuffle=False)
 
-        # Collect the predictions here
+        # 최종 결과를 예측할 List
         all_predictions = []
+        all_scores = []
 
+        # batch size 만큼 돌면서 결과를 가져옴
         for x_test_batch in batches:
-            batch_predictions = sess.run(predictions, {input_x: x_test_batch, dropout_keep_prob: 1.0})
+            batch_predictions = self.sess.run(predictions, {input_x: x_test_batch, dropout_keep_prob: 1.0})
+            scores = self.sess.run(score_layer, {input_x: x_test_batch, dropout_keep_prob: 1.0})
             all_predictions = np.concatenate([all_predictions, batch_predictions])
+            for s in scores:
+                all_scores.append(s)
 
         correct_predictions = float(sum(all_predictions == y_test))
         print("checkpoint - Accuracy: {:g}".format(correct_predictions / float(len(y_test))))
+        self.accuracy = correct_predictions / float(len(y_test))
+        return all_predictions, all_scores
 
+    def predict(self, product_name, tokenized=False, print_out=True):
+        """
+        주어진 Raw 문장을 가지고 어느 카테고리인지 예측
+        :param product_name: 평가 하고 싶은 product name
+        :return: 각 카테고리 별 score ex) [0.13, 0.24, 0....], size: len(category)
+        """
+        category_db = CategoryManager() # Category DB
+        # 주어진 문장을 학습 데이터와 같게 토크나이즈
+        if tokenized:
+            raw = tokenize(product_name)
+        else:
+            raw = product_name
 
-def predict(product_name):
-    product_db = ProductManager()
-    raw = tokenize(product_name)
-    if FLAGS.checkpoint_dir == "":
-        all_subdirs = ["./runs/" + d for d in os.listdir('./runs/.') if os.path.isdir("./runs/" + d)]
-        latest_subdir = max(all_subdirs, key=os.path.getmtime)
-        FLAGS.checkpoint_dir = latest_subdir + "/checkpoint"
+        # 이름으로 input layer 가져오기
+        input_x = self.graph.get_operation_by_name("input_x").outputs[0]
+        # dropout layer 불러오기
+        dropout_keep_prob = self.graph.get_operation_by_name("dropout_keep_prob").outputs[0]
 
-    # Map data into vocabulary
-    vocab_path = os.path.join(FLAGS.checkpoint_dir, "..", "vocab")
-    vocab_processor = data_loader.restore_vocab_processor(vocab_path)
-    graph = tf.Graph()
-    with graph.as_default():
-        session_conf = tf.ConfigProto(
-            allow_soft_placement=FLAGS.allow_soft_placement,
-            log_device_placement=FLAGS.log_device_placement)
-        sess = tf.Session(config=session_conf)
-        sess.run(tf.global_variables_initializer())
+        # Output socre와 preduction layer 불러오기
+        predictions = self.graph.get_operation_by_name("output/predictions").outputs[0]
+        score_layer = self.graph.get_operation_by_name("output/scores").outputs[0]
 
-        checkpoint_file = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
-        # Load the saved meta graph and restore variables
-        saver = tf.train.import_meta_graph("{}.meta".format(checkpoint_file))
-        saver.restore(sess, checkpoint_file)
-    input_x = graph.get_operation_by_name("input_x").outputs[0]
-    dropout_keep_prob = graph.get_operation_by_name("dropout_keep_prob").outputs[0]
-    predictions = graph.get_operation_by_name("output/predictions").outputs[0]
-    x_test = np.array(list(vocab_processor.transform([raw])))
-    prediction = sess.run(predictions, {input_x: x_test, dropout_keep_prob: 1.0})
-    cate_id = data_loader.class_labels(prediction)
-    res = product_db.retrieve_cate_name_by_cate_id(int(cate_id[0]))
-    print('CATEGORY : {}'.format(res.get('cate_name')))
+        # input data np array 형태로 형변환
+        x_test = np.array(list(self.vocab_processor.transform([raw])))
+
+        # dropout 없이 score 얻기
+        scores = self.sess.run(score_layer, {input_x: x_test, dropout_keep_prob: 1.0})
+
+        if print_out:
+            prediction = self.sess.run(predictions, {input_x: x_test, dropout_keep_prob: 1.0})
+            # 가장 높은 점수의 category id 불러오기
+            cate_id = data_loader.class_labels(prediction)
+            # db로부터 불러온 id의 category_name 얻기
+            res = category_db.retrieve_cate_name_by_cate_id(int(cate_id[0]))[0]
+            print('TEXT CATEGORY : {}'.format(res.get('category_name')))
+        return scores
 
 if __name__ == '__main__':
-    # DB로부터 읽어와서
-    # read_data()
-    # train()
-    # eval()
-    predict(product_name='[DRETEC] 일본 드레텍 디지털 다용도 저울(2kg) KS-502')
+    text_classifier = TextCNNClassifier()
+    # DB로부터 읽어와서 text 파일로 저장
+    # text_classifier.read_data()
+
+
+    # Text CNN Classifier 학습
+    # text_classifier.train()
+
+    # Test dataset으로 평가
+    text_classifier.eval()
+
+    # Raw 문장 주고 어느 Category인지 예측
+    scores = text_classifier.predict('블랙 핀 스트라이프 자켓 세일,옴므스타일,간지스타일,남자겨울스타일,남자겨울옷', tokenized=True)
+    print('score : ', scores)
+    print('score : ', len(scores[0]))   # 34개
