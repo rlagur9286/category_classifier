@@ -166,4 +166,4 @@ if __name__ == '__main__':
     print('Accuracy : ', accuracy)
 
     # Predict
-    text_prediction = text_classifier.predict(sentence='아버지가 가방에 들어가신다')
+    text_prediction = text_classifier.predict(sentence='아버지가 가방에 들어가신다')    # 0.76
