@@ -102,7 +102,7 @@ if __name__ == '__main__':
     start = time.time()
     cls.evaluate()
     end = time.time()
-    print('Total time : ', end - start)
+    print('Total time : ', end - start)  # 0.827
 
     while True:
         product_name = input('Product Name(exit to q or Q) : ')
