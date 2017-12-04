@@ -470,5 +470,3 @@ if __name__ == '__main__':
 
     # Raw 문장 주고 어느 Category인지 예측
     scores = text_classifier.predict('블랙 핀 스트라이프 자켓 세일,옴므스타일,간지스타일,남자겨울스타일,남자겨울옷', tokenized=True)
-    print('score : ', scores)
-    print('score : ', len(scores[0]))   # 34개
